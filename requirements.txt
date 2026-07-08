@@ -1,0 +1,5 @@
+# Core analysis (parsing, counting, results.csv) uses the Python standard
+# library only -- nothing to install for the daily numbers.
+#
+# The dashboard needs Plotly (pure-Python wheel, no local compilation):
+plotly>=5.20
