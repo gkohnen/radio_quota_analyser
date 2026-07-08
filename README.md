@@ -9,7 +9,6 @@ For each daily log it reports:
 - total number of songs played that day,
 - **FR** (*Morceaux sur textes en français*): count + % of total,
 - **FWB** (*Morceaux FWB*): count + % of total.
-- **FWB_Day** (*Morceaux FWB en journée*): count + % of total between 6:00 and 22:00.
 
 It appends one row per day to `results.csv` and (re)builds an interactive
 `dashboard.html` that plots each quota's daily share over time.
@@ -47,7 +46,27 @@ Belgian) — that is expected. Add a `Quota 4` later by adding another entry to 
 `quotas` list; the report and dashboard pick it up automatically, target line
 included.
 
-## Requirements
+## Audit / warrant files
+
+Every time you `run`, the analyser also writes a byte-faithful duplicate of each
+log into an `annotated/` sub-folder, with three extra tab-separated columns
+appended — one per quota, in config order (`FR`, `FWB`, `FWB_Day`):
+
+- a **counted song** gets `1` (in the quota) or `0` (not) in each column;
+- any **non-song line** (filler, StationIds, Jingles) gets **blank** cells.
+
+This lets anyone re-derive the numbers by hand — e.g. open a file in Excel and,
+for any quota column, `SUM` = that quota's count (numerator) and `COUNT` of the
+numeric rows = the day's total (denominator). Because the flags are produced by
+the exact same `classify()` logic that fills `results.csv`, the two can never
+disagree (verified: all seven sample days reconcile to the row, and stripping the
+three columns reproduces the original file byte-for-byte). The original columns,
+encoding (Windows-1252) and CRLF line endings are preserved untouched.
+
+Duplicates default to an `annotated/` folder beside each log; use
+`--annotated-dir PATH` to redirect them, or `--no-annotate` to skip.
+
+
 
 - Python 3.10+ (no compiler needed).
 - `pip install -r requirements.txt` (only Plotly, for the dashboard).

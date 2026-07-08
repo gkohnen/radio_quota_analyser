@@ -16,6 +16,10 @@ Rebuild the dashboard from results.csv:
 Do everything for a day and refresh the dashboard:
     python quotas.py run 2026-07-08.log --dashboard
 
+Each run also writes a byte-faithful duplicate with per-quota 1/0 flag columns
+into an 'annotated/' sub-folder (use --annotated-dir to redirect, --no-annotate
+to skip).
+
 Options
     --config PATH     quota definition file (default: quota_config.json)
     --results PATH    accumulated results CSV (default: results.csv)
@@ -30,7 +34,7 @@ import glob
 import sys
 from pathlib import Path
 
-from quota_analyzer import Config, DayResult, analyse_file
+from quota_analyzer import Config, DayResult, analyse_file, annotate_file
 
 HERE = Path(__file__).resolve().parent
 
@@ -99,6 +103,12 @@ def cmd_run(args) -> None:
         result = analyse_file(p, config)
         print_report(result, config)
         rows_by_date[result.date] = result.as_row(quota_ids)
+
+        if not args.no_annotate:
+            src = Path(p)
+            ann_dir = Path(args.annotated_dir) if args.annotated_dir else src.parent / "annotated"
+            out = annotate_file(src, ann_dir / src.name, config)
+            print(f"  annotated copy -> {out}")
 
     save_results(results_path, rows_by_date, quota_ids)
     print(f"  results.csv updated -> {results_path}  ({len(rows_by_date)} day(s) total)")
@@ -184,6 +194,10 @@ def main(argv: list[str] | None = None) -> None:
     p_run = sub.add_parser("run", help="analyse one or more daily log files")
     p_run.add_argument("files", nargs="+", help="log file(s) or glob pattern(s)")
     p_run.add_argument("--dashboard", action="store_true", help="also rebuild the dashboard")
+    p_run.add_argument("--annotated-dir", default=None,
+                       help="folder for annotated duplicates (default: an 'annotated' subfolder beside each log)")
+    p_run.add_argument("--no-annotate", action="store_true",
+                       help="do not write annotated duplicate files")
     p_run.set_defaults(func=cmd_run)
 
     p_dash = sub.add_parser("dashboard", help="rebuild dashboard.html from results.csv")

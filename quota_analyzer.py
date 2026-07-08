@@ -12,8 +12,13 @@ distinguish them from real songs -- including the genuine song
 
 A quota may optionally restrict itself to a time-of-day window (e.g. 06:00-22:00).
 When it does, its percentage is computed against a chosen denominator:
-  * "window" (default) -> songs played inside that same window, or
-  * "day"              -> all songs played that day.
+  * "window" -> songs played inside that same window, or
+  * "day"    -> all songs played that day.
+
+The single function classify() decides, for one line, whether it is a counted
+song and which quotas it belongs to. Both the counting (analyse_file) and the
+per-line audit (annotate_file) are built on it, so the annotated files can never
+disagree with results.csv.
 """
 
 from __future__ import annotations
@@ -23,12 +28,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-# Matches YYYY-MM-DD anywhere in a file name (European calendar date).
 DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 
 
 def _to_seconds(hhmm: str) -> int:
-    """'06:00' or '22:00:00' -> seconds since midnight."""
     parts = [int(p) for p in hhmm.strip().split(":")]
     while len(parts) < 3:
         parts.append(0)
@@ -102,7 +105,6 @@ class Config:
 
 
 def date_from_filename(filename: str) -> str:
-    """Extract an ISO date (YYYY-MM-DD) from a file name. European format."""
     m = DATE_RE.search(Path(filename).name)
     if not m:
         raise ValueError(f"No YYYY-MM-DD date found in file name: {filename!r}")
@@ -114,8 +116,6 @@ def _split_segments(path: str) -> list:
 
 
 def parse_path(line: str):
-    """Return the file path for a log line, or None if malformed.
-    Path is the last tab field, wrapped in parentheses; "()" -> "" (filler)."""
     fields = line.rstrip("\n").split("\t")
     if len(fields) < 6:
         return None
@@ -126,7 +126,6 @@ def parse_path(line: str):
 
 
 def parse_time(line: str):
-    """Seconds-since-midnight from the first field, or None if unparseable."""
     first = line.split("\t", 1)[0].strip()
     if not re.match(r"^\d{1,2}:\d{2}:\d{2}$", first):
         return None
@@ -134,12 +133,37 @@ def parse_time(line: str):
 
 
 @dataclass
+class LineEval:
+    is_song: bool
+    sec: int | None
+    matches: dict          # qid -> bool (criteria match only, window not applied)
+
+
+def classify(line: str, config: Config, excluded: set) -> LineEval:
+    """Decide whether a single line is a counted song and which quotas it matches."""
+    path = parse_path(line)
+    if not path:
+        return LineEval(False, None, {})          # filler (empty path) or malformed
+    segments = _split_segments(path)
+    if {s.lower() for s in segments} & excluded:
+        return LineEval(False, None, {})          # StationIds / Jingles
+    filename = segments[-1] if segments else ""
+    sec = parse_time(line)
+    return LineEval(True, sec, {q.id: q.matches(path, filename) for q in config.quotas})
+
+
+def quota_flag(q: Quota, ev: LineEval) -> int:
+    """1 if this counted song contributes to quota q's numerator, else 0."""
+    return 1 if (ev.matches.get(q.id, False) and q.in_window(ev.sec)) else 0
+
+
+@dataclass
 class DayResult:
     date: str
-    total: int                             # full-day counted songs
+    total: int
     quota_counts: dict
     quota_pct: dict
-    quota_denom: dict                      # denominator actually used per quota
+    quota_denom: dict
     quota_names: dict
 
     def as_row(self, quota_ids: list) -> dict:
@@ -150,32 +174,41 @@ class DayResult:
         return row
 
 
+def iter_records(raw: bytes):
+    """Yield (body_bytes, terminator_bytes) for each record.
+
+    Splits ONLY on real line terminators (\\r\\n, \\r, \\n). It deliberately does
+    NOT use str.splitlines(), which would also break on bytes like 0x85 -- that
+    byte is the CP1252 ellipsis '…' appearing inside song titles, not a line end.
+    """
+    for m in re.finditer(rb"([^\r\n]*)(\r\n|\r|\n|$)", raw):
+        body, term = m.group(1), m.group(2)
+        if body == b"" and term == b"":
+            break  # trailing empty match at end of string
+        yield body, term
+
+
 def analyse_file(log_path, config: Config) -> DayResult:
     """Parse one daily log file and compute totals + per-quota stats."""
     log_path = Path(log_path)
     date = date_from_filename(log_path.name)
-    text = log_path.read_text(encoding=config.encoding, errors="replace")
-
+    raw = log_path.read_bytes()
     excluded = set(config.exclude_path_segments)
-    songs = []  # each: (sec, full_path, filename)
 
-    for line in text.splitlines():
+    songs = []  # list of LineEval for counted songs
+    for body, _term in iter_records(raw):
+        line = body.decode("latin-1")  # lossless; quota tokens are ASCII
         if not line.strip():
             continue
-        path = parse_path(line)
-        if not path:
-            continue  # filler (empty path) or malformed
-        segments = _split_segments(path)
-        if {s.lower() for s in segments} & excluded:
-            continue  # StationIds / Jingles (incl. 3_Made in Belgium\Jingles)
-        filename = segments[-1] if segments else ""
-        songs.append((parse_time(line), path, filename))
+        ev = classify(line, config, excluded)
+        if ev.is_song:
+            songs.append(ev)
 
     total = len(songs)
     counts, pct, denom = {}, {}, {}
     for q in config.quotas:
-        eligible = [s for s in songs if q.in_window(s[0])]
-        c = sum(1 for (_sec, p, fn) in eligible if q.matches(p, fn))
+        eligible = [ev for ev in songs if q.in_window(ev.sec)]
+        c = sum(quota_flag(q, ev) for ev in songs)          # numerator (window-aware)
         d = len(eligible) if q.denominator == "window" else total
         counts[q.id] = c
         denom[q.id] = d
@@ -189,3 +222,35 @@ def analyse_file(log_path, config: Config) -> DayResult:
         quota_denom=denom,
         quota_names={q.id: q.name for q in config.quotas},
     )
+
+
+def annotate_file(log_path, out_path, config: Config):
+    """Write a byte-faithful duplicate of the log with one flag column per quota.
+
+    Counted song  -> 1/0 in each quota column.
+    Any other line -> blank cells, so COUNT of numeric rows == total songs and
+                      SUM of a column == that quota's numerator.
+    Original bytes are preserved exactly (same encoding, same CRLF); only ASCII
+    flag columns are appended. Uses the same record iteration and classify() as
+    analyse_file, so the file can never disagree with results.csv.
+    """
+    log_path, out_path = Path(log_path), Path(out_path)
+    excluded = set(config.exclude_path_segments)
+    raw = log_path.read_bytes()
+
+    out = bytearray()
+    for body, term in iter_records(raw):
+        line = body.decode("latin-1")
+        if not line.strip():
+            out += body + term
+            continue
+        ev = classify(line, config, excluded)
+        if ev.is_song:
+            flags = "\t".join(str(quota_flag(q, ev)) for q in config.quotas)
+        else:
+            flags = "\t".join("" for _ in config.quotas)
+        out += body + b"\t" + flags.encode("latin-1") + term
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(bytes(out))
+    return out_path
