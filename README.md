@@ -9,6 +9,7 @@ For each daily log it reports:
 - total number of songs played that day,
 - **FR** (*Morceaux sur textes en français*): count + % of total,
 - **FWB** (*Morceaux FWB*): count + % of total.
+- **FWB_Day** (*Morceaux FWB en journée*): count + % of total between 6:00 and 22:00.
 
 It appends one row per day to `results.csv` and (re)builds an interactive
 `dashboard.html` that plots each quota's daily share over time.
