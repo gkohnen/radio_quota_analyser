@@ -5,7 +5,8 @@
 
   "exclude_path_segments": [
     "StationIds",
-    "Jingles"
+    "Jingles",
+    "heures"
   ],
 
   "_note_exclusions": "A line is counted as a song only if it has a real file path AND none of its folder segments (split on \\ or /) exactly match the names above. Because 'Jingles' is a segment, '3_Made in Belgium\\Jingles' is excluded while '3_Made in Belgium\\Music' songs are counted. Filler entries (Silence, top horaire, Pub) all have an empty () path and are excluded automatically. We do NOT filter on the word 'silence' in the title: 'CHARLES - silence BEFR.mp3' is a real song.",
@@ -17,7 +18,7 @@
       "id": "FR",
       "name": "FR",
       "description": "Morceaux sur textes en français",
-      "path_contains": ["2_French", "3_F sur le Plat"],
+      "path_contains": ["2_French", "3_F sur le Plat", "4_Karaoke\\Music\\FR", "08mars\\FR"],
       "filename_contains": ["BEFR"],
       "target": 20
     },
@@ -25,7 +26,7 @@
       "id": "FWB",
       "name": "FWB",
       "description": "Morceaux FWB",
-      "path_contains": ["2_Belge"],
+      "path_contains": ["2_Belge", "3_Made in Belgium", "4_Karaoke\\Music\\BE"],
       "filename_contains": ["BEFR"],
       "target": 15
     },
@@ -33,7 +34,7 @@
       "id": "FWB_Day",
       "name": "FWB_Day",
       "description": "Morceaux FWB (06:00-22:00)",
-      "path_contains": ["2_Belge"],
+      "path_contains": ["2_Belge", "3_Made in Belgium", "4_Karaoke\\Music\\BE"],
       "filename_contains": ["BEFR"],
       "time_window": {"start": "06:00", "end": "22:00"},
       "denominator": "day",

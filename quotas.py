@@ -13,6 +13,9 @@ Process several days at once (e.g. a back-fill):
 Rebuild the dashboard from results.csv:
     python quotas.py dashboard
 
+Diagnose a file (encoding + how each line is classified), writing nothing:
+    python quotas.py inspect 2026-07-08.log
+
 Do everything for a day and refresh the dashboard:
     python quotas.py run 2026-07-08.log --dashboard
 
@@ -122,6 +125,80 @@ def cmd_dashboard(args) -> None:
     build_dashboard(Path(args.results), Path(args.out), config)
 
 
+def cmd_inspect(args) -> None:
+    """Diagnose one or more log files without touching results.csv.
+
+    Reports the detected encoding and how each line was classified, so an
+    all-zero result is easy to explain (wrong encoding -> 0 songs; config
+    mismatch -> songs > 0 but quota counts 0, with sample unmatched paths).
+    """
+    from quota_analyzer import (Config as _C, classify, detect_codec,
+                                iter_lines, parse_path, quota_flag)
+    config = _C.load(args.config)
+    excluded = set(config.exclude_path_segments)
+
+    paths: list[str] = []
+    for pattern in args.files:
+        matched = sorted(glob.glob(pattern))
+        paths.extend(matched if matched else [pattern])
+
+    for p in paths:
+        if not Path(p).exists():
+            print(f"  ! not found: {p}", file=sys.stderr)
+            continue
+        raw = Path(p).read_bytes()
+        codec = detect_codec(raw)
+        text = raw.decode(codec)
+
+        non_empty = fillers = excluded_lines = songs = 0
+        qcounts = {q.id: 0 for q in config.quotas}
+        matched_samples, unmatched_samples = [], []
+        for body, _term in iter_lines(text):
+            if not body.strip():
+                continue
+            non_empty += 1
+            path = parse_path(body)
+            if not path:
+                fillers += 1
+                continue
+            ev = classify(body, config, excluded)
+            if not ev.is_song:
+                excluded_lines += 1
+                continue
+            songs += 1
+            hit = False
+            for q in config.quotas:
+                if quota_flag(q, ev):
+                    qcounts[q.id] += 1
+                    hit = True
+            if hit and len(matched_samples) < 3:
+                matched_samples.append(path)
+            elif not hit and len(unmatched_samples) < 3:
+                unmatched_samples.append(path)
+
+        print(f"\n  {Path(p).name}")
+        print(f"  {'-' * 46}")
+        print(f"  detected encoding     : {codec}")
+        print(f"  non-empty lines       : {non_empty}")
+        print(f"  filler (no path)      : {fillers}")
+        print(f"  excluded (folder)     : {excluded_lines}")
+        print(f"  counted songs (total) : {songs}")
+        for q in config.quotas:
+            print(f"      {q.name:<8} matches : {qcounts[q.id]}")
+        if songs == 0 and non_empty > 0:
+            print("  >> 0 songs from non-empty lines: likely an encoding/format mismatch.")
+        elif songs > 0 and all(v == 0 for v in qcounts.values()):
+            print("  >> songs found but no quota matched: check path_contains vs these paths:")
+            for s in unmatched_samples:
+                print(f"       {s}")
+        else:
+            if matched_samples:
+                print("  sample matched paths:")
+                for s in matched_samples:
+                    print(f"       {s}")
+    print()
+
+
 def build_dashboard(results_path: Path, out_path: Path, config: Config) -> None:
     try:
         import plotly.graph_objects as go
@@ -202,6 +279,10 @@ def main(argv: list[str] | None = None) -> None:
 
     p_dash = sub.add_parser("dashboard", help="rebuild dashboard.html from results.csv")
     p_dash.set_defaults(func=cmd_dashboard)
+
+    p_ins = sub.add_parser("inspect", help="diagnose encoding/parsing of log file(s) without writing anything")
+    p_ins.add_argument("files", nargs="+", help="log file(s) or glob pattern(s)")
+    p_ins.set_defaults(func=cmd_inspect)
 
     args = parser.parse_args(argv)
     args.func(args)

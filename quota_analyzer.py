@@ -115,14 +115,29 @@ def _split_segments(path: str) -> list:
     return [seg for seg in re.split(r"[\\/]+", path) if seg]
 
 
+def _path_field_index(fields: list):
+    """Index of the path field: the one wrapped in parentheses, e.g. "(N:\\...)"
+    or the empty "()" of a filler line.
+
+    Scanned from the right so any trailing flag columns (0/1/blank) written by a
+    previous annotation run are skipped, and so a parenthesised *title* earlier on
+    the line is never mistaken for the path.
+    """
+    for i in range(len(fields) - 1, -1, -1):
+        f = fields[i].strip()
+        if f.startswith("(") and f.endswith(")"):
+            return i
+    return None
+
+
 def parse_path(line: str):
-    fields = line.rstrip("\n").split("\t")
-    if len(fields) < 6:
+    """Return the file path for a log line (or None). Tolerant of a raw 6-column
+    line or an already-annotated line that has extra flag columns appended."""
+    fields = line.rstrip("\r\n").split("\t")
+    idx = _path_field_index(fields)
+    if idx is None:
         return None
-    last = fields[-1].strip()
-    if not (last.startswith("(") and last.endswith(")")):
-        return None
-    return last[1:-1].strip()
+    return fields[idx].strip()[1:-1].strip()
 
 
 def parse_time(line: str):
@@ -174,17 +189,58 @@ class DayResult:
         return row
 
 
-def iter_records(raw: bytes):
-    """Yield (body_bytes, terminator_bytes) for each record.
+def detect_codec(raw: bytes) -> str:
+    """Pick a text codec for a raw log file.
 
-    Splits ONLY on real line terminators (\\r\\n, \\r, \\n). It deliberately does
-    NOT use str.splitlines(), which would also break on bytes like 0x85 -- that
-    byte is the CP1252 ellipsis '…' appearing inside song titles, not a line end.
+    Handles the encodings a Windows playout system realistically emits:
+    UTF-16 / UTF-32 (with or without BOM), UTF-8 (with or without BOM) and
+    single-byte Windows-1252. The same codec name round-trips on both decode and
+    encode, so annotated duplicates stay faithful. Windows-1252 falls back to
+    latin-1, which maps every byte 1:1 (a lossless superset for our purposes --
+    all quota tokens are ASCII, and byte-for-byte output re-opens as 1252).
     """
-    for m in re.finditer(rb"([^\r\n]*)(\r\n|\r|\n|$)", raw):
+    if not raw:
+        return "utf-8"
+    if raw[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
+        return "utf-32"                      # encode adds matching BOM
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return "utf-16"                      # encode adds a (LE) BOM
+    if raw[:3] == b"\xef\xbb\xbf":
+        return "utf-8-sig"                   # encode re-adds the BOM
+    # No BOM: sniff for UTF-16 by its tell-tale NUL bytes.
+    sample = raw[:8192]
+    if sample.count(0) > len(sample) * 0.25:
+        even_nul = sample[0::2].count(0)
+        odd_nul = sample[1::2].count(0)
+        return "utf-16-le" if odd_nul >= even_nul else "utf-16-be"
+    try:
+        raw.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        return "latin-1"                     # Windows-1252 / ISO-8859-1
+
+
+def read_text(log_path) -> tuple:
+    """Return (decoded_text, codec_name) for a log file, auto-detecting encoding."""
+    raw = Path(log_path).read_bytes()
+    codec = detect_codec(raw)
+    return raw.decode(codec), codec
+
+
+_LINE_RE = re.compile(r"([^\r\n]*)(\r\n|\r|\n|$)")
+
+
+def iter_lines(text: str):
+    """Yield (body, terminator) splitting ONLY on real line terminators.
+
+    Not str.splitlines(): that also breaks on U+0085 (the CP1252 ellipsis '…'
+    seen inside song titles) and other Unicode separators, which would corrupt
+    both counting and the duplicated files.
+    """
+    for m in _LINE_RE.finditer(text):
         body, term = m.group(1), m.group(2)
-        if body == b"" and term == b"":
-            break  # trailing empty match at end of string
+        if body == "" and term == "":
+            break
         yield body, term
 
 
@@ -192,15 +248,14 @@ def analyse_file(log_path, config: Config) -> DayResult:
     """Parse one daily log file and compute totals + per-quota stats."""
     log_path = Path(log_path)
     date = date_from_filename(log_path.name)
-    raw = log_path.read_bytes()
+    text, _codec = read_text(log_path)
     excluded = set(config.exclude_path_segments)
 
     songs = []  # list of LineEval for counted songs
-    for body, _term in iter_records(raw):
-        line = body.decode("latin-1")  # lossless; quota tokens are ASCII
-        if not line.strip():
+    for body, _term in iter_lines(text):
+        if not body.strip():
             continue
-        ev = classify(line, config, excluded)
+        ev = classify(body, config, excluded)
         if ev.is_song:
             songs.append(ev)
 
@@ -225,32 +280,39 @@ def analyse_file(log_path, config: Config) -> DayResult:
 
 
 def annotate_file(log_path, out_path, config: Config):
-    """Write a byte-faithful duplicate of the log with one flag column per quota.
+    """Write a faithful duplicate of the log with one flag column per quota.
 
     Counted song  -> 1/0 in each quota column.
     Any other line -> blank cells, so COUNT of numeric rows == total songs and
                       SUM of a column == that quota's numerator.
-    Original bytes are preserved exactly (same encoding, same CRLF); only ASCII
-    flag columns are appended. Uses the same record iteration and classify() as
-    analyse_file, so the file can never disagree with results.csv.
+    The original text and line endings are preserved and the file is re-encoded
+    in its own detected encoding; only ASCII flag columns are appended. Uses the
+    same iteration and classify() as analyse_file, so the file can never disagree
+    with results.csv.
     """
     log_path, out_path = Path(log_path), Path(out_path)
     excluded = set(config.exclude_path_segments)
-    raw = log_path.read_bytes()
+    text, codec = read_text(log_path)
 
-    out = bytearray()
-    for body, term in iter_records(raw):
-        line = body.decode("latin-1")
-        if not line.strip():
-            out += body + term
+    out = []
+    for body, term in iter_lines(text):
+        if not body.strip():
+            out.append(body + term)
             continue
-        ev = classify(line, config, excluded)
+        fields = body.split("\t")
+        idx = _path_field_index(fields)
+        if idx is None:
+            base = body                        # no path field; leave line intact
+            ev = LineEval(False, None, {})
+        else:
+            base = "\t".join(fields[:idx + 1])  # drop any pre-existing flag columns
+            ev = classify(base, config, excluded)
         if ev.is_song:
             flags = "\t".join(str(quota_flag(q, ev)) for q in config.quotas)
         else:
             flags = "\t".join("" for _ in config.quotas)
-        out += body + b"\t" + flags.encode("latin-1") + term
+        out.append(base + "\t" + flags + term)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(bytes(out))
+    out_path.write_bytes("".join(out).encode(codec))
     return out_path

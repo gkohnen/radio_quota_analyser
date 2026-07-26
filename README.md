@@ -59,12 +59,33 @@ This lets anyone re-derive the numbers by hand — e.g. open a file in Excel and
 for any quota column, `SUM` = that quota's count (numerator) and `COUNT` of the
 numeric rows = the day's total (denominator). Because the flags are produced by
 the exact same `classify()` logic that fills `results.csv`, the two can never
-disagree (verified: all seven sample days reconcile to the row, and stripping the
-three columns reproduces the original file byte-for-byte). The original columns,
-encoding (Windows-1252) and CRLF line endings are preserved untouched.
+disagree. The original text and line endings are preserved and the duplicate is
+written back in the log's own encoding (see below); only ASCII flag columns are
+appended.
 
 Duplicates default to an `annotated/` folder beside each log; use
 `--annotated-dir PATH` to redirect them, or `--no-annotate` to skip.
+
+## Encoding
+
+Log files are read with automatic encoding detection: UTF-16 / UTF-32 (with or
+without a BOM), UTF-8 (with or without a BOM), and single-byte Windows-1252 /
+ISO-8859-1 are all handled. This matters because playout systems often export
+UTF-16; reading such a file as if it were single-byte makes every line fail to
+parse and produces a CSV full of zeros with an empty dashboard. If you ever see
+that, run `inspect` (below) to check the detected encoding.
+
+## Diagnosing a file
+
+    python quotas.py inspect 2026-07-08.log
+
+`inspect` writes nothing. It prints the detected encoding and a breakdown of how
+each line was classified (filler, excluded, counted song) plus per-quota match
+counts and sample paths. Two tell-tales:
+
+- **0 songs from non-empty lines** → an encoding or format mismatch.
+- **songs > 0 but every quota count 0** → a `path_contains` / `filename_contains`
+  rule doesn't match your actual paths (it prints sample paths to compare).
 
 
 
