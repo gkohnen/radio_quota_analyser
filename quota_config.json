@@ -18,7 +18,7 @@
       "id": "FR",
       "name": "FR",
       "description": "Morceaux sur textes en français",
-      "path_contains": ["2_French", "3_F sur le Plat", "4_Karaoke\\Music\\FR", "08mars\\FR"],
+      "path_contains": ["2_French", "3_F sur le Plat", "4_Karaoke\\Music\\FR\\", "08mars\\FR"],
       "filename_contains": ["BEFR"],
       "target": 20
     },
@@ -26,7 +26,7 @@
       "id": "FWB",
       "name": "FWB",
       "description": "Morceaux FWB",
-      "path_contains": ["2_Belge", "3_Made in Belgium", "4_Karaoke\\Music\\BE"],
+      "path_contains": ["2_Belge", "3_Made in Belgium", "4_Karaoke\\Music\\BE\\", "3_YouFM_Backstage\\Music"],
       "filename_contains": ["BEFR"],
       "target": 15
     },
@@ -34,7 +34,7 @@
       "id": "FWB_Day",
       "name": "FWB_Day",
       "description": "Morceaux FWB (06:00-22:00)",
-      "path_contains": ["2_Belge", "3_Made in Belgium", "4_Karaoke\\Music\\BE"],
+      "path_contains": ["2_Belge", "3_Made in Belgium", "4_Karaoke\\Music\\BE", "3_YouFM_Backstage\\Music"],
       "filename_contains": ["BEFR"],
       "time_window": {"start": "06:00", "end": "22:00"},
       "denominator": "day",
