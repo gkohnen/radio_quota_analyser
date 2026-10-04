@@ -213,7 +213,6 @@ def build_dashboard(results_path: Path, out_path: Path, config: Config) -> None:
         sys.exit("results.csv is empty -- run the analyser on some log files first.")
 
     dates = sorted(rows_by_date)
-    visible_days = 30
     fig = go.Figure()
 
     palette = ["#2563eb", "#e11d48", "#059669", "#d97706", "#7c3aed"]
@@ -248,13 +247,6 @@ def build_dashboard(results_path: Path, out_path: Path, config: Config) -> None:
     fig.update_layout(
         title="Daily quota share (% of songs played)",
         xaxis_title="Date",
-        xaxis=dict(
-            type="category",
-            categoryorder="array",
-            categoryarray=dates,
-            range=[-0.5, visible_days - 0.5],
-            fixedrange=True,
-        ),
         yaxis_title="Share of songs played (%)",
         yaxis=dict(ticksuffix="%", rangemode="tozero"),
         template="plotly_white",
@@ -263,44 +255,7 @@ def build_dashboard(results_path: Path, out_path: Path, config: Config) -> None:
         margin=dict(t=90, r=30, l=60, b=60),
     )
 
-    scroll_script = """
-        const chart = document.getElementById('{plot_id}');
-        const visibleDays = chart.layout.xaxis.range[1] - chart.layout.xaxis.range[0];
-        const totalDays = chart.layout.xaxis.categoryarray.length;
-        if (totalDays > visibleDays) {
-            const scrollbar = document.createElement('div');
-            scrollbar.style.overflowX = 'auto';
-            scrollbar.tabIndex = 0;
-            scrollbar.setAttribute('role', 'region');
-            scrollbar.setAttribute('aria-label', 'Scroll through dates');
-            const track = document.createElement('div');
-            track.style.width = `${totalDays / visibleDays * 100}%`;
-            track.style.height = '1px';
-            scrollbar.appendChild(track);
-            chart.after(scrollbar);
-            scrollbar.addEventListener('scroll', () => {
-                const maxScroll = scrollbar.scrollWidth - scrollbar.clientWidth;
-                const start = maxScroll > 0 ? Math.round(
-                    scrollbar.scrollLeft / maxScroll * (totalDays - visibleDays)
-                ) : 0;
-                Plotly.relayout(chart, {
-                    'xaxis.range': [start - 0.5, start + visibleDays - 0.5]
-                });
-            });
-        }
-    """
-    html = fig.to_html(
-        include_plotlyjs="cdn",
-        full_html=True,
-        default_height="90vh",
-        config=dict(
-            responsive=True,
-            modeBarButtonsToRemove=["autoScale2d", "resetScale2d"],
-            doubleClick=False,
-        ),
-        post_script=scroll_script,
-    )
-    out_path.write_text(html, encoding="utf-8")
+    out_path.write_text(fig.to_html(include_plotlyjs="cdn", full_html=True), encoding="utf-8")
     print(f"  dashboard written -> {out_path}")
 
 
