@@ -113,7 +113,10 @@ python quotas.py dashboard
 ```
 
 Open `dashboard.html` in any browser. `results.csv` is the running history — keep
-it (e.g. in version control) so the chart grows one point per day.
+it (e.g. in version control) so the chart grows one point per day. Once there is
+more than a month of history, the chart defaults to showing the most recent 30
+days; drag the range slider beneath the chart (or click-drag inside the plot) to
+scroll back through older days.
 
 ## Scheduling
 

@@ -244,9 +244,20 @@ def build_dashboard(results_path: Path, out_path: Path, config: Config) -> None:
             annotation_font=dict(color=color, size=11),
         )
 
+    # With many days of history the plot gets wide; default to showing the
+    # most recent window and let a range slider handle horizontal scrolling
+    # (drag it, or drag inside the chart) through the full history.
+    visible_days = 30
+    default_range = [dates[-visible_days], dates[-1]] if len(dates) > visible_days else [dates[0], dates[-1]]
+
     fig.update_layout(
         title="Daily quota share (% of songs played)",
         xaxis_title="Date",
+        xaxis=dict(
+            type="date",
+            range=default_range,
+            rangeslider=dict(visible=True, thickness=0.08),
+        ),
         yaxis_title="Share of songs played (%)",
         yaxis=dict(ticksuffix="%", rangemode="tozero"),
         template="plotly_white",
